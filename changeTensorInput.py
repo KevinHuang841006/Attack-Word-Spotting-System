@@ -1,6 +1,15 @@
 """
 python3 question.py --output_dir=output --labels_file=ckpts/conv_actions_labels.txt --graph_file=ckpts/DS_CNN_S.pb
+
+重點在
+tf.import_graph_def 
+in load_graph()
+
+example:
+    更換每個以Reshape當input的tensor 
+    tf.import_graph_def(graph_def, name='', input_map={"Reshape_1:0": new_input})
 """
+
 import numpy as np
 import tensorflow as tf
 from speech_commands import label_wav
