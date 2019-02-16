@@ -1,5 +1,6 @@
 import os
 import sys
+import math
 
 import numpy as np
 import tensorflow as tf
@@ -10,20 +11,16 @@ from sklearn.preprocessing import OneHotEncoder
 from random import shuffle
 from scipy.signal import butter, lfilter
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-config = tf.ConfigProto() 
-config.gpu_options.per_process_gpu_memory_fraction = 0.3
-sess2 = tf.Session(config=config)
-
-# important~~~  when initialize_restore_graph
 tf.reset_default_graph()
 
-graph_def = tf.GraphDef()
+
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+config2 = tf.ConfigProto() 
+config2.gpu_options.per_process_gpu_memory_fraction = 0.3
+
 
 def ZERO():
     return np.asarray(0., dtype=np.float32)
-
-
     
 def load_labels(filename):
     return [line.rstrip() for line in tf.gfile.FastGFile(filename)]    
@@ -49,8 +46,6 @@ def load_data():
         rates1 = []
         datas1 = []
         labels1 = []
-        
-        
         
         print(label," ",labels_dict[o2])
         o2 = o2 + 1
@@ -78,30 +73,40 @@ def load_data():
         datas.append(datas1)
         
 load_data()
-#def load_graph(filename):
 datas = np.array(datas)
 print("data shape: ",datas.shape)
 datas = datas / 32767
-#return new_input
+
+
+#min_arr = np.zeros( (len(datas),len(datas[0]) , 1) , dtype=np.float32 )
+#max_arr = np.zeros( (len(datas),len(datas[0]) , 1) , dtype=np.float32 )
+#const_arr = np.zeros( (len(datas),len(datas[0]) , 1) , dtype=np.float32 )
+#print("const_arr size: ", const_arr.shape)
+
+#for jjj in range(len(datas)):
+#    for iii in range( len(datas[0]) ):
+#        max_arr[ jjj ][iii][0] = 100000
+#        const_arr[ jjj ][iii][0] = 5000
 
 filename = "ckpts/train2.pb"
 ## GPU Environment
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 config = tf.ConfigProto()
 config.gpu_options.per_process_gpu_memory_fraction = 0.3
-#sess = tf.Session(config = config)
 
+
+modifier_tmp = np.zeros((30, 16000))
+modifier_tmp2 = np.zeros((30, 16000))
 
 with tf.Session(config = config) as sess:
     sess.run(tf.global_variables_initializer())
-    #with tf.gfile.FastGFile( filename , 'rb') as f:
-        
-    #    graph_def.ParseFromString(f.read())
-    #tf.import_graph_def(graph_def, name='')
     
-    
+    Const = tf.placeholder(tf.float32, shape=( 30 , 1), name='constant')
     ## global varieble for tensorflow to optimaize    
-    modifier = tf.Variable(np.zeros( (30, 16000) ,  dtype=np.float32))  
+    modifier = tf.Variable(np.zeros( (30, 16000) ,  dtype=np.float32))
+    modifier_place_holder = tf.placeholder(tf.float32, shape=( 30 , 16000), name='modify')
+    assign_op = modifier.assign( modifier_place_holder )
+    #assign_op2 = modifier.assign(modifier_tmp2)
     new_input = tf.placeholder(tf.float32, shape=( 30 , 16000), name='new_input_placeholder')
     audio1 = tf.add(modifier , new_input)
     print(audio1)
@@ -111,19 +116,10 @@ with tf.Session(config = config) as sess:
     sess.run(tf.global_variables_initializer())
     
     saver = tf.train.Saver()
-    #save_path_name = "ckpts/new1.ckpt"
-    #save_path = saver.save(sess, save_path_name)
-    
     new_saver = tf.train.import_meta_graph('ckpts/model3.meta',input_map={'Placeholder:0':  audio12})
     new_saver.restore(sess, 'ckpts/model3')
     
-    #saver.restore(sess, save_path_name)
     
-    save_path_name = "ckpts/new.ckpt"
-    save_path = saver.save(sess, save_path_name)
-    #init_op = sess.graph.get_operation_by_name('init')
-    #sess.run(init_op)
-    #print(init_op)
     
     #tf.import_graph_def(graph_def, name='', input_map={"Reshape_1": mfcc2})
     ## LOAD predict tensor
@@ -135,68 +131,57 @@ with tf.Session(config = config) as sess:
     real = tf.reduce_sum( tlab * output, 1)
     other = tf.reduce_max( (1 - tlab) * output - tlab * 10000, 1)
     print(tlab)
-    loss1 = tf.maximum(ZERO(), other - real )
+    
+    ## make the target confidence score more higher
+    zeross = np.zeros(30,dtype=np.float32)
+    for k1 in range(30):
+        zeross[k1]=0
+    
+    loss1 = tf.maximum( zeross , other - real )
     
     ## loss 2
     loss2 = tf.reduce_sum(tf.square(audio1 - new_input),  1 )
     #loss2 = l2dist * 5000
     
-    tot_loss = loss1 + loss2 * 5000;
+    tot_loss = loss1 * Const + loss2;
     
     optimizer = tf.train.AdamOptimizer(0.01)
     trains = optimizer.minimize( tot_loss, var_list=[modifier])
-    
     predict = tf.nn.softmax(output)
+    predict2 = tf.get_default_graph().get_tensor_by_name("Softmax:0")
     
     init = tf.variables_initializer(var_list=[modifier]+tf.global_variables() )
-    #init = tf.variables_initializer(var_list=[modifier] )
     
     sess.run(tf.global_variables_initializer())
     init_m = tf.variables_initializer(var_list=[modifier] )
     sess.run(init_m)
-    """
-    saver = tf.train.Saver()
-    save_path_name = "ckpts/" + str(99) + "_batch30_model.ckpt"
-    saver.restore(sess, save_path_name)
-    """
-    saver.restore(sess, save_path_name)
-    #init_op2 = tf.global_variables_initializer()
-    #sess.run(init_op2)
-    #sess.run(init_op)
+    
+    
+    #saver.restore(sess, save_path_name)
     new_saver.restore(sess, 'ckpts/model3')
     
+    
+    
+    ### New Graph
     """
-    print("********************************")
-    print("*   train original model acc:   *")
-    print("********************************")
-    print("")
-    print("")
-    anss = 0
-    all_data = 0
-    for dst in labels_dict:
-        
-        #sess.run(init)
-        print("destination file: ",dst)
-        labels_t = []
-        l1 = labels_dict.index(dst)
-        ll1 = [0,0,0,0,0,0,0,0,0,0]
-        ll1[l1] = 1
-            
-        for i in range(int(len(datas[l1])/30)):
-            #sess.run(init)
-            if i > 3:
-                break
-            sess.run(init_m)
-            result = sess.run(predict, feed_dict={new_input: datas[l1][i*30:i*30+30]})
-            all_data = all_data + 30
-            for k in result:
-                if np.argmax(k) == l1:
-                    anss = anss + 1
-    print(anss/all_data)
+    os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+    config2 = tf.ConfigProto() 
+    config2.gpu_options.per_process_gpu_memory_fraction = 0.3
+
+    sess2 = tf.Session(config=config2)
+    #sess2.run(tf.global_variables_initializer())
+    saver2 = tf.train.import_meta_graph('ckpts/model4.meta')
+    saver2.restore(sess2, 'ckpts/model4')
+    
+    placeholder_2 = tf.get_default_graph().get_tensor_by_name("Placeholder_3:0")
+    predict2 = tf.get_default_graph().get_tensor_by_name("Softmax_2:0")
     """
+    
+    
     
     ## some measure-ment matric
     count_metric = np.zeros((10, 10))
+    tot_norm = 0
     
     total_data = 0
     total_ans = 0
@@ -218,75 +203,156 @@ with tf.Session(config = config) as sess:
                 
                 tmp_ans = 0
                 
+                
+                
+                tot_err_arr = np.zeros( (120) , dtype=np.float32 )
+                """
+                anss = 0
+                tot = 0
+                for i in range(int(len(datas[src1])/30)):
+                    sess.run(assign_op, feed_dict={ modifier_place_holder : modifier_tmp2 })
+                    result = sess.run(predict2, feed_dict={new_input: datas[src1][i*30:i*30+30] })
+                    for k in result:
+                        tot = tot + 1
+                        if np.argmax(k) == src1:
+                            anss = anss + 1
+                print(src," ",anss," ",tot)
+                """
+                
                 for i in range(int(len(datas[src1])/30)):
                     #sess.run(init)
+                    sess.run(assign_op, feed_dict={ modifier_place_holder : modifier_tmp2 })
                     if i > 3:
                         break
                     ## count total adv
                     total_data = total_data + 30
                     
-                    _, adv = sess.run( [trains, audio12 ] , feed_dict={new_input : datas[src1][i*30:i*30+30], tlab : labels_t[i*30:i*30+30] }  )
-                    adv = np.array(adv)
-                    #print(adv.shape)
-                    result = sess.run(predict, feed_dict={new_input: adv})
-                    result = result
-                    anss = 0
-                    for k in result:
-                        if np.argmax(k) == l1:
-                            anss = anss + 1
-                    check_fail = 0
                     
+                    ## add constant
+                    min_arr = np.zeros( (30 , 1) , dtype=np.float32 )
+                    max_arr = np.zeros( (30 , 1) , dtype=np.float32 )
+                    const_arr = np.zeros( (30 , 1) , dtype=np.float32 )
+                    for iji in range(30):
+                        max_arr[iji][0] = 1000000
+                        const_arr[iji][0] = 5000
                     
+                    # norm2 perturbation
+                    norm2_arr = np.zeros(30,dtype=np.float32)
                     
                     check_np1 = np.zeros(30)
-                    while anss<25:
+                    for binary in range(5):
                         
-                        # check whether write to file
-                        check_np = np.zeros(30)
                         
-                        check_fail = check_fail + 1
-                        if check_fail % 200==0:
-                            print("check fail: ",check_fail)
-                        if check_fail == 200:
-                            break
-                        _, adv = sess.run( [trains, audio12 ] , feed_dict={new_input : datas[src1][i*30:i*30+30], tlab : labels_t[i*30:i*30+30] }  )
+                        
+                        #modifier
+                        _, adv = sess.run( [trains, audio12 ] , feed_dict={new_input : datas[src1][i*30:i*30+30], tlab : labels_t[i*30:i*30+30], Const : const_arr }  )
+                        modifier_tmp = sess.run(modifier)
                         adv = np.array(adv)
                         #print(adv.shape)
-                        result = sess.run(predict, feed_dict={new_input: adv})
-                        result = result
+                        #assign_op = modifier.assign(modifier_tmp)
+                        sess.run(assign_op, feed_dict={ modifier_place_holder : modifier_tmp2 })
+                        #result = sess2.run(predict2, feed_dict={placeholder_2: adv})
+                        result = sess.run(predict2, feed_dict={new_input: adv})
+                        sess.run(assign_op, feed_dict={ modifier_place_holder : modifier_tmp})
+                        
                         anss = 0
-                        l_np = 0
                         for k in result:
                             if np.argmax(k) == l1:
-                                check_np[l_np]=1
                                 anss = anss + 1
-                            l_np = l_np + 1
-                        check_np1 = check_np
-                    #print("ans: ",anss)
-                    if check_fail == 200:
-                        print("Fail！！！！！！！！！！！！！！！！！！！！！！！！！！！！")
-                        break;
-                    ## count success adv
-                    total_ans = total_ans + anss
-                    tmp_ans = tmp_ans + anss
+                        check_fail = 0
+                        
+                        check_np1 = np.zeros(30)
+                        #while anss<20:
+                        for iter in range(800):
+                            # check whether write to file
+                            check_np = np.zeros(30)
+                            
+                            check_fail = check_fail + 1
+                            if check_fail % 200==0:
+                                print("check fail: ",check_fail,"  binary: ",binary ,"  modifier: ", np.sum(modifier_tmp) )
+                            if check_fail == 800:
+                                break
+                            _, adv = sess.run( [trains, audio12 ] , feed_dict={new_input : datas[src1][i*30:i*30+30], tlab : labels_t[i*30:i*30+30], Const : const_arr }  )
+                            modifier_tmp = sess.run( modifier )
+                            adv = np.array(adv)
+                            #print(adv.shape)
+                            #assign_op = modifier.assign(modifier_tmp)
+                            sess.run(assign_op, feed_dict={ modifier_place_holder : modifier_tmp2 })
+                            #result = sess2.run(predict2, feed_dict={placeholder_2: adv})
+                            result = sess.run(predict2, feed_dict={new_input: adv})
+                            sess.run(assign_op, feed_dict={ modifier_place_holder : modifier_tmp })
+                            
+                            #result = result
+                            anss = 0
+                            #l_np = 0
+                            adv = adv * 32767
+                            adv = np.array(adv, dtype=np.int16)
+                            
+                            real_data = datas[src1][i*30:i*30+30] * 32767
+                            real_data = np.array(real_data, dtype=np.int16)
+                            
+                            for k in range(len(result)):
+                                if np.argmax(result[k]) == l1:
+                                    #if check_np[]
+                                    check_np[ k ]=1
+                                    anss = anss + 1
+                                    
+                                    out_name = "adv_datas/" + src + "/" + dst + "/" +str(i*30 + k)+".wav"
+                                    wav.write(out_name ,16000 , adv[k])
+                                    
+                                    tmp_norm = 0
+                                    #for kk in range(16000):
+                                    #    tmp_norm = tmp_norm + ( adv[k][kk] - real_data[k][kk] )*( adv[k][kk] - real_data[k][kk] )
+                                    #norm2_arr[k] = np.linalg.norm( adv[k] - real_data[k], ord=2)
+                                    adv_max = np.max(np.abs(adv[k]))
+                                    real_max = np.max(np.abs(real_data[k]))
+                                    
+                                    norm2_arr[k] = abs(adv_max - real_max)
+                                    
+                                    
+                                    
+                            if anss>20:
+                                break
+                                    
+                                    
+                                    
+                            check_np1 = check_np
+                        
+                        ## count success adv
+                        total_ans = total_ans + anss
+                        #tmp_ans = tmp_ans + anss
+                        
+                        #adv = adv * 32767
+                        #adv = np.array(adv, dtype=np.int16)
+                        for j in range( 30 ):
+                            if check_np1[j]==1:
+                                #out_name = "adv_datas/" + src + "/" + dst + "/" +str(i*30 + j)+".wav"
+                                #wav.write(out_name ,16000 , adv[j])
+                                
+                                const_arr[ j ][0] = (min_arr[ j ][0] + const_arr[ j ][0])/2
+                                max_arr[ j ][0] = const_arr[ j ][0]
+                                
+                                tot_err_arr[ i * 30 + j ] = 1
+                            else:
+                                const_arr[ j ][0] = (max_arr[ j ][0] + const_arr[ j ][0])/2
+                                min_arr[ j ][0] = const_arr[ j ][0]
                     
-                    adv = adv * 32767
-                    adv = np.array(adv, dtype=np.int16)
-                    for j in range( 30 ):
-                        if check_np1[j]==1:
-                            out_name = "adv_datas/" + src + "/" + dst + "/" +str(i*30 + j)+".wav"
-                            wav.write(out_name ,16000 , adv[j])
-                    """
-                    for j in range( 30 ):
-                        out_name = "adv_data_C_and_W/orig_yes/" +str(i*30 + j)+".wav"
-                        adv2 = datas[src1][j] * 32767
-                        adv2 = np.array(adv2, dtype=np.int16)
-                        wav.write(out_name ,16000 , adv2)
-                    """
+                    
+                    tot_norm = tot_norm + np.sum(norm2_arr)
+                    
+                    
+                    
+                for q1q in range(120):
+                    if tot_err_arr[q1q] == 1 :
+                        tmp_ans = tmp_ans + 1
                 print("     tmp acc: ",tmp_ans/120)
                 count_metric[src1][l1] = tmp_ans
+                
+                
+                
+                
     print("acc: ",total_ans/total_data)
     np.save("C_and_W.npy", count_metric)
-                        
-    
-    
+    print("norm: ", tot_norm/total_data)
+    print("tot_norm: ",tot_norm)
+    print("tot_data: ",total_data)
