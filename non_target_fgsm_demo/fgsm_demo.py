@@ -180,7 +180,7 @@ class MainWindow(QWidget):
         adv_data_t = sess.run(adv, feed_dict={place_hold: datas, label_y: input_labels })
         adv_data_t = adv_data_t[0]
         
-        for cow in range(10):
+        for cow in range(200):
             adv_data_t = sess.run(adv, feed_dict={place_hold: adv_data_t, label_y: input_labels })
             adv_data_t = adv_data_t[0]
         
